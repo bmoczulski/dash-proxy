@@ -250,13 +250,17 @@ class DashDownloader(HasLogger):
     def download_template(self, template, representation=None, segment=None):
         dest = self.render_template(template, representation, segment)
         dest_url = self.full_url(dest)
-        self.info('requesting %s from %s' % (dest, dest_url))
-        r = requests.get(dest_url)
-        if r.status_code >= 200 and r.status_code < 300:
-            self.write(dest, r.content)
-
+        dest = dest.split('?')[0]
+        dest = os.path.join(self.proxy.output_dir, dest)
+        if os.path.isfile(dest):
+            self.info('skipping %s already exists' % dest)
         else:
-            self.error('cannot download %s server returned %d' % (dest_url, r.status_code))
+            self.info('requesting %s from %s' % (dest, dest_url))
+            r = requests.get(dest_url)
+            if r.status_code >= 200 and r.status_code < 300:
+                self.write(dest, r.content)
+            else:
+                self.error('cannot download %s server returned %d' % (dest_url, r.status_code))
 
     def render_template(self, template, representation=None, segment=None):
         template = template.replace('$RepresentationID$', '{representation_id}')
@@ -275,8 +279,6 @@ class DashDownloader(HasLogger):
         return self.mpd_base_url + dest # TODO remove hardcoded arrd
 
     def write(self, dest, content):
-        dest = dest.split('?')[0]
-        dest = os.path.join(self.proxy.output_dir, dest)
         os.makedirs(os.path.dirname(dest), exist_ok=True)
         f = open(dest, 'wb')
         f.write(content)
