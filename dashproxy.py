@@ -144,15 +144,31 @@ class DashProxy(HasLogger):
     def handle_mpd(self, mpd):
         original_mpd = copy.deepcopy(mpd)
 
-        periods = mpd.findall('mpd:Period', ns)
+        periods = original_mpd.findall('mpd:Period', ns)
         logger.log(logging.INFO, 'mpd=%s' % (periods,))
         logger.log(logging.VERBOSE, 'Found %d periods choosing the 1st one' % (len(periods),))
         period = periods[0]
         for as_idx, adaptation_set in enumerate( period.findall('mpd:AdaptationSet', ns) ):
+            max_bandwidth = 0
+            max_rep_idx = 0
+            max_representation = None
+            
             for rep_idx, representation in enumerate( adaptation_set.findall('mpd:Representation', ns) ):
-                self.verbose('Found representation with id %s' % (representation.attrib.get('id', 'UKN'),))
-                rep_addr = RepAddr(0, as_idx, rep_idx)
-                self.ensure_downloader(mpd, rep_addr)
+                cur_bandwidth = int(representation.attrib.get('bandwidth'))
+                if cur_bandwidth > max_bandwidth:
+                    max_bandwidth = cur_bandwidth
+                    max_rep_idx = rep_idx
+                    # Delete old node
+                    if max_representation:
+                        adaptation_set.remove(max_representation)
+                    # Set the new max node
+                    max_representation = representation
+                else:
+                    adaptation_set.remove(representation)
+
+            self.verbose('Found representation with id %s' % (max_representation.attrib.get('id', 'UKN'),))
+            rep_addr = RepAddr(0, as_idx, max_rep_idx)
+            self.ensure_downloader(mpd, rep_addr)
 
         self.write_output_mpd(original_mpd)
 
@@ -215,7 +231,7 @@ class DashDownloader(HasLogger):
             repeat = int( segment.attrib.get('r', '0') )
             idx = idx + 1
             for _ in range(0, repeat):
-                elem = xml.etree.ElementTree.Element('{urn:mpeg:dash:schema:mpd:2011}S', attrib={'d':duration})
+                elem = xml.etree.ElementTree.Element('{urn:mpeg:dash:schema:mpd:2011}S', attrib={'d':str(duration)})
                 segment_timeline.insert(idx, elem)
                 self.verbose('appding a new elem')
                 idx = idx + 1
@@ -225,7 +241,7 @@ class DashDownloader(HasLogger):
         for segment in segment_timeline.findall('mpd:S', ns):
             current_time = int(segment.attrib.get('t', '-1'))
             if current_time == -1:
-                segment.attrib['t'] = next_time
+                segment.attrib['t'] = str(next_time)
             else:
                 next_time = current_time
             next_time += int(segment.attrib.get('d', '0'))
