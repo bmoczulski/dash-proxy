@@ -8,6 +8,7 @@ import argparse
 import requests
 import xml.etree.ElementTree
 import copy
+import threading
 
 from termcolor import colored
 
@@ -168,7 +169,9 @@ class DashProxy(HasLogger):
 
             self.verbose('Found representation with id %s' % (max_representation.attrib.get('id', 'UKN'),))
             rep_addr = RepAddr(0, as_idx, max_rep_idx)
-            self.ensure_downloader(mpd, rep_addr)
+            #self.ensure_downloader(mpd, rep_addr)
+            thread = threading.Thread(target=self.ensure_downloader, args=(mpd,rep_addr))
+            thread.start()
 
         self.write_output_mpd(original_mpd)
 
@@ -192,6 +195,7 @@ class DashProxy(HasLogger):
         self.info('Writing the update MPD file')
         content = xml.etree.ElementTree.tostring(mpd, encoding="utf-8").decode("utf-8")
         dest = os.path.join(self.output_dir, 'manifest.mpd')
+        os.makedirs(self.output_dir, exist_ok=True)
 
         with open(dest, 'wt') as f:
             f.write(content)
