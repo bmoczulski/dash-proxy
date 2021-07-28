@@ -122,8 +122,8 @@ class DashProxy(HasLogger):
 
         r = requests.get(self.mpd)
         if r.status_code < 200 or r.status_code >= 300:
-            logger.log(logging.WARNING, 'Cannot GET the MPD. Server returned %s. Retrying after %ds' % (r.status_code, retry_interval))
-            self.refresh_mpd(after=retry_interval)
+            logger.log(logging.WARNING, 'Cannot GET the MPD. Server returned %s. Retrying after %ds' % (r.status_code, self.retry_interval))
+            self.refresh_mpd(after=self.retry_interval)
 
         xml.etree.ElementTree.register_namespace('', ns['mpd'])
         mpd = xml.etree.ElementTree.fromstring(r.text)
