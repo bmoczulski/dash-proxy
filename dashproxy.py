@@ -100,7 +100,7 @@ class HasLogger(object):
 class DashProxy(HasLogger):
     retry_interval = 10
 
-    def __init__(self, mpd, output_dir, download, save_mpds=False):
+    def __init__(self, mpd, output_dir, download, save_mpds=False, bandwidth_limit=0):
         self.logger = logger
 
         self.mpd = mpd
@@ -108,6 +108,7 @@ class DashProxy(HasLogger):
         self.download = download
         self.save_mpds = save_mpds
         self.i_refresh = 0
+        self.bandwidth_limit = bandwidth_limit
 
         self.downloaders = {}
 
@@ -163,11 +164,12 @@ class DashProxy(HasLogger):
             
             for rep_idx, representation in enumerate( adaptation_set.findall('mpd:Representation', ns) ):
                 cur_bandwidth = int(representation.attrib.get('bandwidth'))
-                if cur_bandwidth > max_bandwidth:
+                if cur_bandwidth > max_bandwidth or max_bandwidth == 0 or \
+                    (self.bandwidth_limit and max_bandwidth > int(self.bandwidth_limit)):
                     max_bandwidth = cur_bandwidth
                     max_rep_idx = rep_idx
                     # Delete old node
-                    if max_representation:
+                    if max_representation is not None:
                         adaptation_set.remove(max_representation)
                     # Set the new max node
                     max_representation = representation
@@ -301,7 +303,8 @@ def run(args):
     proxy = DashProxy(mpd=args.mpd,
                   output_dir=args.o,
                   download=args.d,
-                  save_mpds=args.save_individual_mpds)
+                  save_mpds=args.save_individual_mpds,
+                  bandwidth_limit=args.b)
     return proxy.run()
 
 def main():
@@ -310,6 +313,7 @@ def main():
     parser.add_argument("-v", action="store_true")
     parser.add_argument("-d", action="store_true")
     parser.add_argument("-o", default='.')
+    parser.add_argument("-b", default=0)
     parser.add_argument("--save-individual-mpds", action="store_true")
     args = parser.parse_args()
 
