@@ -127,6 +127,13 @@ class DashProxy(HasLogger):
 
         xml.etree.ElementTree.register_namespace('', ns['mpd'])
         mpd = xml.etree.ElementTree.fromstring(r.text)
+        # save original
+        content = xml.etree.ElementTree.tostring(mpd, encoding="utf-8").decode("utf-8")
+        os.makedirs(self.output_dir, exist_ok=True)
+        f = open(self.output_dir + '/manifest.mpd.orig', 'w')
+        f.write(content)
+        f.close()
+
         self.handle_mpd(mpd)
 
     def get_base_url(self, mpd):
