@@ -116,15 +116,19 @@ class DashProxy(HasLogger):
         logger.log(logging.INFO, 'Running dash proxy for stream %s. Output goes in %s' % (self.mpd, self.output_dir))
         self.refresh_mpd()
 
-    def refresh_mpd(self, after=0):
+    def refresh_mpd(self, after=0, error_cnt=0):
         self.i_refresh += 1
         if after>0:
             time.sleep(after)
 
         r = requests.get(self.mpd)
         if r.status_code < 200 or r.status_code >= 300:
+            error_cnt += 1
             logger.log(logging.WARNING, 'Cannot GET the MPD. Server returned %s. Retrying after %ds' % (r.status_code, self.retry_interval))
-            self.refresh_mpd(after=self.retry_interval)
+            if error_cnt < 10:
+                self.refresh_mpd(after=self.retry_interval, error_cnt=error_cnt)
+            else:
+                logger.log(logging.WARNING, 'Tried %d times. Giving up.' % error_cnt)
 
         xml.etree.ElementTree.register_namespace('', ns['mpd'])
         mpd = xml.etree.ElementTree.fromstring(r.text)
