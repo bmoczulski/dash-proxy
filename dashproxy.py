@@ -197,7 +197,7 @@ class DashProxy(HasLogger):
             # TODO parse minimum_update_period
             self.refresh_mpd(after=10)
         else:
-            self.info('VOD MPD. Nothing more to do. Stopping...')
+            self.info('VOD MPD. Nothing more to do. Waiting for downloads to finish...')
 
     def ensure_downloader(self, mpd, rep_addr):
         if rep_addr in self.downloaders:
