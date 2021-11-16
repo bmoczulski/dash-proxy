@@ -274,7 +274,7 @@ class DashDownloader(HasLogger):
         dest = dest.split('?')[0]
         dest = os.path.join(self.proxy.output_dir, dest)
         if os.path.isfile(dest):
-            self.info('skipping %s already exists' % dest)
+            self.verbose('skipping %s already exists' % dest)
         else:
             self.info('requesting %s from %s' % (dest, dest_url))
             r = requests.get(dest_url)
