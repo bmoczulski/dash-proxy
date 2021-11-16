@@ -232,6 +232,8 @@ class DashDownloader(HasLogger):
 
         self.initialization_downloaded = False
 
+        self.requests = requests.Session()
+
     def handle_mpd(self, mpd, base_url):
         self.mpd_base_url = base_url
         self.mpd = MpdLocator(mpd)
@@ -277,7 +279,7 @@ class DashDownloader(HasLogger):
             self.verbose('skipping %s already exists' % dest)
         else:
             self.info('requesting %s from %s' % (dest, dest_url))
-            r = requests.get(dest_url)
+            r = self.requests.get(dest_url)
             if r.status_code >= 200 and r.status_code < 300:
                 self.write(dest, r.content)
             else:
