@@ -135,9 +135,8 @@ class DashProxy(HasLogger):
         # save original
         content = xml.etree.ElementTree.tostring(mpd, encoding="utf-8").decode("utf-8")
         os.makedirs(self.output_dir, exist_ok=True)
-        f = open(self.output_dir + '/manifest.mpd.orig', 'w')
-        f.write(content)
-        f.close()
+        with open(self.output_dir + '/manifest.mpd.orig', 'w') as f:
+            f.write(content)
 
         self.handle_mpd(mpd)
 
@@ -278,12 +277,19 @@ class DashDownloader(HasLogger):
         if os.path.isfile(dest):
             self.verbose('skipping %s already exists' % dest)
         else:
+            os.makedirs(os.path.dirname(dest), exist_ok=True)
             self.info('requesting %s from %s' % (dest, dest_url))
-            r = self.requests.get(dest_url)
-            if r.status_code >= 200 and r.status_code < 300:
-                self.write(dest, r.content)
-            else:
-                self.error('cannot download %s server returned %d' % (dest_url, r.status_code))
+            try:
+                with self.requests.get(dest_url, stream=True) as r:
+                    r.raise_for_status()
+                    if r.status_code >= 200 and r.status_code < 300:
+                        with open(dest, 'xb') as f:
+                            for chunk in r.iter_content(chunk_size=8196): 
+                                f.write(chunk)
+                    else:
+                        self.error('cannot download %s server returned %d' % (dest_url, r.status_code))
+            except Exception as e:
+                self.error(e)
 
     def render_template(self, template, representation=None, segment=None):
         template = template.replace('$RepresentationID$', '{representation_id}')
@@ -300,13 +306,6 @@ class DashDownloader(HasLogger):
 
     def full_url(self, dest):
         return self.mpd_base_url + dest # TODO remove hardcoded arrd
-
-    def write(self, dest, content):
-        os.makedirs(os.path.dirname(dest), exist_ok=True)
-        f = open(dest, 'wb')
-        f.write(content)
-        f.close()
-
 
 def run(args):
     logger.setLevel(logging.VERBOSE if args.v else logging.INFO)
