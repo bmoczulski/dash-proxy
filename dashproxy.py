@@ -117,24 +117,27 @@ class DashProxy(HasLogger):
         logger.log(logging.INFO, 'Running dash proxy for stream %s. Output goes in %s' % (self.mpd, self.output_dir))
         self.refresh_mpd()
 
-    def refresh_mpd(self, after=0):
+    def refresh_mpd(self, after=0, error_cnt=0):
         self.i_refresh += 1
         if after>0:
             time.sleep(after)
 
         r = requests.get(self.mpd)
         if r.status_code < 200 or r.status_code >= 300:
+            error_cnt += 1
             logger.log(logging.WARNING, 'Cannot GET the MPD. Server returned %s. Retrying after %ds' % (r.status_code, self.retry_interval))
-            self.refresh_mpd(after=self.retry_interval)
+            if error_cnt < 10:
+                self.refresh_mpd(after=self.retry_interval, error_cnt=error_cnt)
+            else:
+                logger.log(logging.WARNING, 'Tried %d times. Giving up.' % error_cnt)
 
         xml.etree.ElementTree.register_namespace('', ns['mpd'])
         mpd = xml.etree.ElementTree.fromstring(r.text)
         # save original
         content = xml.etree.ElementTree.tostring(mpd, encoding="utf-8").decode("utf-8")
         os.makedirs(self.output_dir, exist_ok=True)
-        f = open(self.output_dir + '/manifest.mpd.orig', 'w')
-        f.write(content)
-        f.close()
+        with open(self.output_dir + '/manifest.mpd.orig', 'w') as f:
+            f.write(content)
 
         self.handle_mpd(mpd)
 
@@ -159,29 +162,33 @@ class DashProxy(HasLogger):
         logger.log(logging.VERBOSE, 'Found %d periods choosing the 1st one' % (len(periods),))
         period = periods[0]
         for as_idx, adaptation_set in enumerate( period.findall('mpd:AdaptationSet', ns) ):
-            max_bandwidth = 0
-            max_rep_idx = 0
-            max_representation = None
-            
-            for rep_idx, representation in enumerate( adaptation_set.findall('mpd:Representation', ns) ):
-                cur_bandwidth = int(representation.attrib.get('bandwidth'))
-                if cur_bandwidth > max_bandwidth or max_bandwidth == 0 or \
-                    (self.bandwidth_limit and max_bandwidth > int(self.bandwidth_limit)):
-                    max_bandwidth = cur_bandwidth
-                    max_rep_idx = rep_idx
-                    # Delete old node
-                    if max_representation is not None:
-                        adaptation_set.remove(max_representation)
-                    # Set the new max node
-                    max_representation = representation
-                else:
-                    adaptation_set.remove(representation)
+            ep = adaptation_set.find('mpd:EssentialProperty', ns)
+            if ep is not None and ep.attrib.get('schemeIdUri') == 'http://dashif.org/guidelines/trickmode' and ep.attrib.get('value') == '1':
+                period.remove(adaptation_set)
+            else:
+                max_bandwidth = 0
+                max_rep_idx = 0
+                max_representation = None
+                
+                for rep_idx, representation in enumerate( adaptation_set.findall('mpd:Representation', ns) ):
+                    cur_bandwidth = int(representation.attrib.get('bandwidth'))
+                    if cur_bandwidth > max_bandwidth or max_bandwidth == 0 or \
+                        (self.bandwidth_limit and max_bandwidth > int(self.bandwidth_limit)):
+                        max_bandwidth = cur_bandwidth
+                        max_rep_idx = rep_idx
+                        # Delete old node
+                        if max_representation is not None:
+                            adaptation_set.remove(max_representation)
+                        # Set the new max node
+                        max_representation = representation
+                    else:
+                        adaptation_set.remove(representation)
 
-            self.verbose('Found representation with id %s' % (max_representation.attrib.get('id', 'UKN'),))
-            rep_addr = RepAddr(0, as_idx, max_rep_idx)
-            #self.ensure_downloader(mpd, rep_addr)
-            thread = threading.Thread(target=self.ensure_downloader, args=(mpd,rep_addr))
-            thread.start()
+                self.verbose('Found representation with id %s' % (max_representation.attrib.get('id', 'UKN'),))
+                rep_addr = RepAddr(0, as_idx, max_rep_idx)
+                #self.ensure_downloader(mpd, rep_addr)
+                thread = threading.Thread(target=self.ensure_downloader, args=(mpd,rep_addr))
+                thread.start()
 
         self.write_output_mpd(original_mpd)
 
@@ -190,7 +197,7 @@ class DashProxy(HasLogger):
             # TODO parse minimum_update_period
             self.refresh_mpd(after=10)
         else:
-            self.info('VOD MPD. Nothing more to do. Stopping...')
+            self.info('VOD MPD. Nothing more to do. Waiting for downloads to finish...')
 
     def ensure_downloader(self, mpd, rep_addr):
         if rep_addr in self.downloaders:
@@ -224,6 +231,8 @@ class DashDownloader(HasLogger):
         self.mpd_base_url = ''
 
         self.initialization_downloaded = False
+
+        self.requests = requests.Session()
 
     def handle_mpd(self, mpd, base_url):
         self.mpd_base_url = base_url
@@ -271,14 +280,21 @@ class DashDownloader(HasLogger):
         dest = dest.split('?')[0]
         dest = os.path.join(self.proxy.output_dir, dest)
         if os.path.isfile(dest):
-            self.info('%sskipping %s already exists' % (info, dest))
+            self.verbose('%sskipping %s already exists' % (info, dest))
         else:
+            os.makedirs(os.path.dirname(dest), exist_ok=True)
             self.info('%srequesting %s from %s' % (info, dest, dest_url))
-            r = requests.get(dest_url)
-            if r.status_code >= 200 and r.status_code < 300:
-                self.write(dest, r.content)
-            else:
-                self.error('cannot download %s server returned %d' % (dest_url, r.status_code))
+            try:
+                with self.requests.get(dest_url, stream=True) as r:
+                    r.raise_for_status()
+                    if r.status_code >= 200 and r.status_code < 300:
+                        with open(dest, 'xb') as f:
+                            for chunk in r.iter_content(chunk_size=8196): 
+                                f.write(chunk)
+                    else:
+                        self.error('cannot download %s server returned %d' % (dest_url, r.status_code))
+            except Exception as e:
+                self.error(e)
 
     def render_template(self, template, representation=None, segment=None):
         template = template.replace('$RepresentationID$', '{representation_id}')
@@ -295,13 +311,6 @@ class DashDownloader(HasLogger):
 
     def full_url(self, dest):
         return self.mpd_base_url + dest # TODO remove hardcoded arrd
-
-    def write(self, dest, content):
-        os.makedirs(os.path.dirname(dest), exist_ok=True)
-        f = open(dest, 'wb')
-        f.write(content)
-        f.close()
-
 
 def run(args):
     logger.setLevel(logging.VERBOSE if args.v else logging.INFO)
