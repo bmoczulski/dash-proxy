@@ -3,6 +3,7 @@
 import os.path
 
 import time
+from datetime import timedelta
 import logging
 import argparse
 import requests
@@ -239,18 +240,22 @@ class DashDownloader(HasLogger):
 
         segments = copy.deepcopy(segment_timeline.findall('mpd:S', ns))
         idx = 0
+        total=0
         for segment in segments:
             duration = int( segment.attrib.get('d', '0') )
             repeat = int( segment.attrib.get('r', '0') )
             idx = idx + 1
+            total += duration * (repeat + 1)
             for _ in range(0, repeat):
                 elem = xml.etree.ElementTree.Element('{urn:mpeg:dash:schema:mpd:2011}S', attrib={'d':str(duration)})
                 segment_timeline.insert(idx, elem)
-                self.verbose('appding a new elem')
+                self.verbose('appending a new elem')
                 idx = idx + 1
 
         media_template = segment_template.attrib.get('media', '')
+        timescale = int(segment_template.attrib.get('timescale','1'))
         next_time = 0
+        total_info = '/' + str(timedelta(seconds=round(total / timescale))) + ' '
         for segment in segment_timeline.findall('mpd:S', ns):
             current_time = int(segment.attrib.get('t', '-1'))
             if current_time == -1:
@@ -258,17 +263,17 @@ class DashDownloader(HasLogger):
             else:
                 next_time = current_time
             next_time += int(segment.attrib.get('d', '0'))
-            self.download_template(media_template, rep, segment)
+            self.download_template(media_template, rep, segment, info=str(timedelta(seconds=round(next_time / timescale))) + total_info)
 
-    def download_template(self, template, representation=None, segment=None):
+    def download_template(self, template, representation=None, segment=None, info=''):
         dest = self.render_template(template, representation, segment)
         dest_url = self.full_url(dest)
         dest = dest.split('?')[0]
         dest = os.path.join(self.proxy.output_dir, dest)
         if os.path.isfile(dest):
-            self.info('skipping %s already exists' % dest)
+            self.info('%sskipping %s already exists' % (info, dest))
         else:
-            self.info('requesting %s from %s' % (dest, dest_url))
+            self.info('%srequesting %s from %s' % (info, dest, dest_url))
             r = requests.get(dest_url)
             if r.status_code >= 200 and r.status_code < 300:
                 self.write(dest, r.content)
