@@ -7,6 +7,7 @@ from datetime import timedelta
 import logging
 import argparse
 import requests
+from requests.adapters import HTTPAdapter, Retry
 import xml.etree.ElementTree
 import copy
 import threading
@@ -233,6 +234,8 @@ class DashDownloader(HasLogger):
         self.initialization_downloaded = False
 
         self.requests = requests.Session()
+        retries = Retry(total=15, backoff_factor=0.1, status_forcelist=[429, 500, 502, 503, 504])
+        self.requests.mount('https://', HTTPAdapter(max_retries=retries))
 
     def handle_mpd(self, mpd, base_url):
         self.mpd_base_url = base_url
