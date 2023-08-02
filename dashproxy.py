@@ -167,29 +167,19 @@ class DashProxy(HasLogger):
             if ep is not None and ep.attrib.get('schemeIdUri') == 'http://dashif.org/guidelines/trickmode' and ep.attrib.get('value') == '1':
                 period.remove(adaptation_set)
             else:
-                max_bandwidth = 0
                 max_rep_idx = 0
                 max_representation = None
                 
                 for rep_idx, representation in enumerate( adaptation_set.findall('mpd:Representation', ns) ):
-                    cur_bandwidth = int(representation.attrib.get('bandwidth'))
-                    if cur_bandwidth > max_bandwidth or max_bandwidth == 0 or \
-                        (self.bandwidth_limit and max_bandwidth > int(self.bandwidth_limit)):
-                        max_bandwidth = cur_bandwidth
-                        max_rep_idx = rep_idx
-                        # Delete old node
-                        if max_representation is not None:
-                            adaptation_set.remove(max_representation)
-                        # Set the new max node
-                        max_representation = representation
-                    else:
-                        adaptation_set.remove(representation)
+                    max_representation = representation
+                    max_rep_idx = rep_idx
 
-                self.verbose('Found representation with id %s' % (max_representation.attrib.get('id', 'UKN'),))
-                rep_addr = RepAddr(0, as_idx, max_rep_idx)
-                #self.ensure_downloader(mpd, rep_addr)
-                thread = threading.Thread(target=self.ensure_downloader, args=(mpd,rep_addr))
-                thread.start()
+
+                    self.verbose('Found representation with id %s' % (max_representation.attrib.get('id', 'UKN'),))
+                    rep_addr = RepAddr(0, as_idx, max_rep_idx)
+                    #self.ensure_downloader(mpd, rep_addr)
+                    thread = threading.Thread(target=self.ensure_downloader, args=(mpd,rep_addr))
+                    thread.start()
 
         self.write_output_mpd(original_mpd)
 
