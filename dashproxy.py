@@ -268,17 +268,17 @@ class DashDownloader(HasLogger):
         timescale = int(segment_template.attrib.get('timescale','1'))
         next_time = 0
         total_info = '/' + str(timedelta(seconds=round(total / timescale))) + ' '
-        for segment in segment_timeline.findall('mpd:S', ns):
+        for index, segment in enumerate(segment_timeline.findall('mpd:S', ns)):
             current_time = int(segment.attrib.get('t', '-1'))
             if current_time == -1:
                 segment.attrib['t'] = str(next_time)
             else:
                 next_time = current_time
             next_time += int(segment.attrib.get('d', '0'))
-            self.download_template(media_template, rep, segment, info=str(timedelta(seconds=round(next_time / timescale))) + total_info)
+            self.download_template(media_template, rep, segment, info=str(timedelta(seconds=round(next_time / timescale))) + total_info, index=index)
 
-    def download_template(self, template, representation=None, segment=None, info=''):
-        dest = self.render_template(template, representation, segment)
+    def download_template(self, template, representation=None, segment=None, info='', index=None):
+        dest = self.render_template(template, representation, segment, index)
         dest_url = self.full_url(dest)
         dest = dest.split('?')[0]
         dest = os.path.join(self.proxy.output_dir, dest)
@@ -299,8 +299,9 @@ class DashDownloader(HasLogger):
             except Exception as e:
                 self.error(e)
 
-    def render_template(self, template, representation=None, segment=None):
+    def render_template(self, template, representation=None, segment=None, index=None):
         template = template.replace('$RepresentationID$', '{representation_id}')
+        template = template.replace('$Number$', '{number}')
         template = template.replace('$Time$', '{time}')
 
         args = {}
@@ -308,6 +309,8 @@ class DashDownloader(HasLogger):
             args['representation_id'] = representation.attrib.get('id', '')
         if segment is not None:
             args['time'] = segment.attrib.get('t', '')
+        if index is not None:
+            args['number'] = index
 
         template = template.format(**args)
         return template
