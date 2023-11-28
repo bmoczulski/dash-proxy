@@ -261,6 +261,7 @@ class DashDownloader(HasLogger):
 
         media_template = segment_template.attrib.get('media', '')
         timescale = int(segment_template.attrib.get('timescale','1'))
+        startNumber = int(segment_template.attrib.get('startNumber','0'))
         next_time = 0
         total_info = '/' + str(timedelta(seconds=round(total / timescale))) + ' '
         for index, segment in enumerate(segment_timeline.findall('mpd:S', ns)):
@@ -270,7 +271,7 @@ class DashDownloader(HasLogger):
             else:
                 next_time = current_time
             next_time += int(segment.attrib.get('d', '0'))
-            self.download_template(media_template, rep, segment, info=str(timedelta(seconds=round(next_time / timescale))) + total_info, index=index)
+            self.download_template(media_template, rep, segment, info=str(timedelta(seconds=round(next_time / timescale))) + total_info, index=index + startNumber)
 
     def download_template(self, template, representation=None, segment=None, info='', index=None):
         dest = self.render_template(template, representation, segment, index)
