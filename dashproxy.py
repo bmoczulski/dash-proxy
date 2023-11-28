@@ -46,6 +46,11 @@ ch.setFormatter(formatter)
 logger.addHandler(ch)
 
 def baseUrl(url):
+    # remove query first - parameters can contain '/' too
+    idx = url.rfind('?')
+    if idx >= 0:
+        url = url[:idx]
+
     idx = url.rfind('/')
     if idx >= 0:
         return url[:idx+1]
