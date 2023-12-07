@@ -11,6 +11,8 @@ from requests.adapters import HTTPAdapter, Retry
 import xml.etree.ElementTree
 import copy
 import threading
+import math
+import re
 
 from termcolor import colored
 
@@ -57,6 +59,21 @@ def baseUrl(url):
     else:
         return url
 
+def ISO8601DurationSeconds(duration: str) -> float:
+    a_float = '([0-9]+(\.[0-9]+)?)'
+    maybe = lambda suffix: f'({a_float}{suffix})?'
+    # reject [Y]ears and [M]onths because their time varies (also assume no leap seconds)
+    pattern = f'P{maybe("D")}T{maybe("H")}{maybe("M")}{maybe("S")}'
+    match = re.match(pattern, duration)
+    if not match:
+        raise RuntimeError(f'Invalid duration: {duration}')
+    (d, h, m, s) = match.group(2,5,8,11)
+    s = float(s or '0')
+    s += 60 * float(m or '0')
+    s += 60 * 60 * float(h or '0')
+    s += 24 * 60 * 60 * float(d or '0')
+    return s
+
 class RepAddr(object):
     def __init__(self, period_idx, adaptation_set_idx, representation_idx):
         self.period_idx = period_idx
@@ -85,8 +102,63 @@ class MpdLocator(object):
         return self.segment_template(rep_addr).find('mpd:SegmentTimeline', ns)
 
     def adaptation_set(self, rep_addr):
-        return self.mpd.findall('mpd:Period', ns)[rep_addr.period_idx].findall('mpd:AdaptationSet', ns)[rep_addr.adaptation_set_idx]
+        return self.period(rep_addr).findall('mpd:AdaptationSet', ns)[rep_addr.adaptation_set_idx]
 
+    def periods(self):
+        return self.mpd.findall('mpd:Period', ns)
+
+    def period(self, rep_addr):
+        return self.periods()[rep_addr.period_idx]
+
+    def period_start(self, rep_addr):
+        start = 0.0
+        # 3.10.2.2.3. Period Information
+        period = self.period(rep_addr)
+        if 'start' in period.attrib:
+            # - If the attribute @start is present in the Period, then PSwc[i] is the value of this attribute
+            #   minus the value of @start of the first Period.
+            if rep_addr.period_idx != 0:
+                start = ISO8601DurationSeconds(period.attrib.get('start'))
+                first_start = self.period_start(RepAddr(0, 0, 0))
+                start -= first_start
+            else:
+                # The above quote implies that PSwc[i] is relative to @start of 1st Period
+                # so for i=0 it will always be 0.0 _by definition_ (@start - @start == 0).
+                start = 0.0
+        else:
+            previous_rep_addr = RepAddr(rep_addr.period_idx - 1) if rep_addr.period_idx != 0 else None
+            previous_period = self.period(previous_rep_addr) if previous_rep_addr else None
+            # - If the @start attribute is absent, but the previous Period element contains a @duration attribute ...
+            if previous_period and 'duration' in previous_duration.attrib:
+                previous_duration = ISO8601DurationSeconds(previous_duration.attrib.get('duration'))
+                previous_start = self.period_start(previous_rep_addr)
+                # ... then the start time of the Period is the sum of the start time of the previous
+                # Period PSwc[i] and the value of the attribute @duration of the previous Period.
+                start = previous_start + previous_duration
+            else:
+                # And if there is neither @start nor previous @duration then what? Malformed MPD?
+                pass
+        return start
+
+    def period_end(self, rep_addr):
+        end = 0.0
+        period_count = len(self.periods())
+        # 3.10.2.2.3. Period Information
+        # If the Period is the last one in the MPD, the time PEwc[i] is obtained as
+        if rep_addr.period_idx == period_count - 1:
+            if 'mediaPresentationDuration' in self.mpd.attrib:
+                # the Media Presentation Duration MPDur, with MPDur the value of MPD@mediaPresentationDuration if present
+                end = ISO8601DurationSeconds(self.mpd.attrib.get('mediaPresentationDuration'))
+            else:
+                # or the sum of PSwc[i] of the last Period and the value of Period@duration of the last Period.
+                period = self.period(rep_addr)
+                start = self.period_start(rep_addr)
+                duration = ISO8601DurationSeconds(period.attrib.get('duration')) # implicitly required to be present
+                end = start + duration
+        else:
+            # the time PEwc[i] is obtained as the Period start time of the next Period, i.e. PEwc[i] = PSwc[i+1].
+            end = self.period_start(RepAddr(rep_addr.period_idx + 1))
+        return end
 
 class HasLogger(object):
     def verbose(self, msg):
@@ -245,7 +317,32 @@ class DashDownloader(HasLogger):
             self.initialization_downloaded = True
             self.download_template(initialization_template, rep)
 
-        segments = copy.deepcopy(segment_timeline.findall('mpd:S', ns))
+        if segment_timeline:
+            segments = copy.deepcopy(segment_timeline.findall('mpd:S', ns))
+        else:
+            # Let's create artificial <SegmentTimeline> with a single <S> to keep further processing unified.
+            d = int(segment_template.attrib.get('duration','0'))
+            PSwc = self.mpd.period_start(self.rep_addr)
+            PEwc = self.mpd.period_end(self.rep_addr)
+            # 3.10.2.2.4. Representation Information
+            # If the SegmentTemplate@duration is present and the SegmentTemplate.SegmentTimeline is not present, then
+            # - NS=1, (so we create 1-element array here)
+            # - ts the value of the @timescale attribute
+            ts = int(segment_template.attrib.get('timescale','1'))
+            S = xml.etree.ElementTree.Element('{urn:mpeg:dash:schema:mpd:2011}S', attrib={
+                # t[s] is 0
+                't':'0',
+                # the d[s] is the value of @duration attribute
+                'd': str(d),
+                # r[s] is the ceil of (PEwc[i] - PSwc[i] - t[s]/ts)*ts/d[s])
+                #                                          ^^^^^^^ this bit can be ignored because t[s] is 0
+                'r': str(math.ceil((PEwc - PSwc) * ts / d))
+            })
+            # self.verbose("There is no timeline, created artificial one: <S %s>" % (" ".join([f'{k}="{v}"' for k,v in S.attrib.items()])))
+            segments = [S]
+            # new empty <SegmentTimeline> needed below
+            segment_timeline = xml.etree.ElementTree.Element('{urn:mpeg:dash:schema:mpd:2011}SegmentTimeline')
+
         idx = 0
         total=0
         for segment in segments:
