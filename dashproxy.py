@@ -395,6 +395,7 @@ class DashDownloader(HasLogger):
     def render_template(self, template, representation=None, segment=None, index=None):
         template = template.replace('$RepresentationID$', '{representation_id}')
         template = template.replace('$Number$', '{number}')
+        template = re.sub('\$Number%([0-9]*)d\$', '{number:\\1d}', template)
         template = template.replace('$Time$', '{time}')
 
         args = {}
